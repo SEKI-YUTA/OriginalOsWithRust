@@ -21,32 +21,7 @@ fn efi_main(_iamge_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     let vw = vram.width;
     let vh = vram.height;
     fill_rect(&mut vram, 0x000000, 0, 0, vw, vh).expect("fall_rect failed");
-    fill_rect(&mut vram, 0xff0000, 32, 32, 32, 32).expect("fill_rect failed");
-    fill_rect(&mut vram, 0x00ff00, 64, 64, 64, 64).expect("fill_rect failed");
-    fill_rect(&mut vram, 0x0000ff, 128, 128, 128, 128).expect("fill_rect failed");
 
-    for i in 0..256 {
-        let _ = draw_point(&mut vram, 0x010101 * i as u32, i, i);
-    }
-    let grid_size: i64 = 32;
-    let rect_size: i64 = grid_size * 8;
-    for i in (0..=rect_size).step_by(grid_size as usize) {
-        let _ = draw_line(&mut vram, 0xff0000, 0, i, rect_size, i);
-    }
-    let cx = rect_size / 2;
-    let cy = rect_size / 2;
-    for i in (0..=rect_size).step_by(grid_size as usize) {
-        let _ = draw_line(&mut vram, 0xffff00, cy, cx, 0, i);
-        let _ = draw_line(&mut vram, 0x00ffff, cy, cx, i, 0);
-        let _ = draw_line(&mut vram, 0xff00ff, cy, cx, rect_size, i);
-        let _ = draw_line(&mut vram, 0xffffff, cy, cx, i, rect_size);
-    }
-
-    for (i, c) in "ABCDEF".chars().enumerate() {
-        draw_font_fg(&mut vram, i as i64 * 16 + 256, i as i64 * 16, 0xffffff, c)
-    }
-
-    draw_str_fg(&mut vram, 256, 256, 0xffffff, "Hello, World!");
 
     let mut w = VramTextWriter::new(&mut vram);
 
@@ -67,7 +42,7 @@ fn efi_main(_iamge_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
 
     let total_memory_size_mib = total_memory_pages * 4096 / 1024 / 1024;
     writeln!(w, "total_memory_size_mib = {total_memory_size_mib}").unwrap();
-
+    draw_test_pattern(&mut vram);
     loop {
         hlt()
     }
@@ -75,6 +50,26 @@ fn efi_main(_iamge_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
 
 pub fn hlt() {
     unsafe { asm!("hlt") }
+}
+
+
+fn draw_test_pattern<T: Bitmap>(buf: &mut T) {
+    let w = 128;
+    let left = buf.width() - w  - 1;
+    let colors = [0x000000, 0xff0000, 0x00ff00, 0x0000ff];
+    let h = 64;
+    for (i, c) in colors.iter().enumerate() {
+        let y = i as i64 * h;
+        fill_rect(buf, *c, left, y, h, h).expect("fill_rect failed");
+        fill_ret(buf, !*c, left + h, y, h, h).expect("fill_rect failed");
+    }
+    let points = [(0, 0), (0, w), (w, 0), (w, w)];
+    for (x0, y0) in points.iter() {
+        for(x1, y1) in points.iter() {
+            let _ = draw_line(buf, 0xffffff, left + *x0, *y0, left + *x1, *y1);
+        }
+    }
+    draw_str_fg(buf, left, h * colors.len() as i64, 0x00ff00, "0123456789");
 }
 
 #[repr(C)]
