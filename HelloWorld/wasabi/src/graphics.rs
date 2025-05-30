@@ -159,24 +159,6 @@ pub fn draw_font_fg<T: Bitmap>(
     c: char
 ) {
     if let Ok(_c) = u8::try_from(c) {
-        let font_a = "
-    ........
-    ...**...
-    ...**...
-    ...**...
-    ...**...
-    ..*..*..
-    ..*..*..
-    ..*..*..
-    ..*..*..
-    .******.
-    .*....*.
-    .*....*.
-    .*....*.
-    ***..***
-    ........
-    ........
-    ";
         if let Some(font) = lookup_font(c) {
             for (dy, row) in font.iter().enumerate() {
                 for (dx, pixel) in row.iter().enumerate() {
