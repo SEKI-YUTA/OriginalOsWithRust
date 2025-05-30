@@ -1,12 +1,14 @@
+#![no_std]
+#![no_main]
 #![feature(offset_of)]
+
 use core::arch::asm;
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::writeln;
-use wasabi::graphics::draw_test_pattern;
 use wasabi::graphics::fill_rect;
-use wasabi::graphics::Bitmap;
 
+use wasabi::graphics::Bitmap;
 use wasabi::uefi::exit_from_efi_boot_services;
 use wasabi::uefi::init_vram;
 use wasabi::uefi::EfiHandle;
@@ -35,7 +37,7 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     let mut w = VramTextWriter::new(&mut vram);
 
      for i in 0..4 {
-         writeln!(w, "i = {i}").unwrap();
+        writeln!(w, "i = {i}").unwrap();
      }
 
     let mut memory_map = MemoryMapHolder::new();

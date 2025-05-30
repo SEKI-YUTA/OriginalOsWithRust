@@ -153,7 +153,7 @@ pub struct EfiBootServicesTable {
 }
 
 impl EfiBootServicesTable {
-    fn get_memory_map(&self, map: &mut MemoryMapHolder) -> EfiStatus {
+    pub fn get_memory_map(&self, map: &mut MemoryMapHolder) -> EfiStatus {
         (self.get_memory_map)(
             &mut map.memory_map_size,
             map.memory_map_buffer.as_mut_ptr(),
@@ -270,7 +270,7 @@ pub struct VramTextWriter<'a> {
 }
 
 impl<'a> VramTextWriter<'a> {
-    fn new(vram: &'a mut VramBufferInfo) -> Self {
+    pub fn new(vram: &'a mut VramBufferInfo) -> Self {
         Self {
             vram,
             cursor_x: 0,
