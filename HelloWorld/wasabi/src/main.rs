@@ -1,3 +1,4 @@
+#![no_std]
 #![no_main]
 #![feature(offset_of)]
 
@@ -15,12 +16,8 @@ use wasabi::uefi::EfiSystemTable;
 use wasabi::uefi::MemoryMapHolder;
 use wasabi::uefi::VramTextWriter;
 use wasabi::x86::hlt;
-
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    exit_qemu(QemuExitCode::Fail);
-}
-
+use wasabi::qemu::QemuExitCode;
+use wasabi::qemu::exit_qemu;
 
 
 #[no_mangle]
@@ -61,6 +58,13 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
         hlt()
     }
 }
+
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    exit_qemu(QemuExitCode::Fail);
+}
+
 
 
 
