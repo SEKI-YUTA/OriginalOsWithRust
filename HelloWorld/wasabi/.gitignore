@@ -1,3 +1,4 @@
 /target
 .vscode
 /qemu-build
+.DS_Store
