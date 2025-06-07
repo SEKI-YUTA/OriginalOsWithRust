@@ -5,6 +5,7 @@
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::writeln;
+use wasabi::graphics::draw_test_pattern;
 use wasabi::graphics::fill_rect;
 
 use wasabi::graphics::Bitmap;
@@ -29,14 +30,13 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     let vw = vram.width();
     let vh = vram.height();
     fill_rect(&mut vram, 0x000000, 0, 0, vw, vh).expect("fall_rect failed");
-
+    draw_test_pattern(&mut vram);
 
     let mut w = VramTextWriter::new(&mut vram);
 
-     for i in 0..4 {
+    for i in 0..4 {
         writeln!(w, "i = {i}").unwrap();
-     }
-
+    };
     let mut memory_map = MemoryMapHolder::new();
     let status = efi_system_table.boot_services().get_memory_map(&mut memory_map);
 
