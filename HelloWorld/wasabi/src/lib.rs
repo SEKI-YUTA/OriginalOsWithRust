@@ -12,6 +12,7 @@ pub mod serial;
 pub mod uefi;
 pub mod x86;
 pub mod init;
+pub mod print;
 
 #[cfg(test)]
 pub mod test_runner;

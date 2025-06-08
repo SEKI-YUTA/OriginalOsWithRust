@@ -18,9 +18,13 @@ use wasabi::uefi::EfiMemoryType;
 use wasabi::uefi::EfiSystemTable;
 use wasabi::uefi::VramTextWriter;
 use wasabi::x86::hlt;
+use wasabi::print;
 
 #[no_mangle]
 fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
+    print!("Booting Wasabi OS...");
+    print!("image_handle: {:#18X}\n", image_handle);
+    print!("efi_system_table: {:#p}\n", efi_system_table);
     let mut vram = init_vram(efi_system_table).expect("init_vram failed");
     let vw = vram.width();
     let vh = vram.height();
