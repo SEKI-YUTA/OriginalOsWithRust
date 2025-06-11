@@ -9,6 +9,7 @@ use wasabi::graphics::draw_test_pattern;
 use wasabi::graphics::fill_rect;
 use wasabi::graphics::Bitmap;
 use wasabi::init;
+use wasabi::print::hexdump;
 use wasabi::qemu::exit_qemu;
 use wasabi::qemu::QemuExitCode;
 use wasabi::uefi::exit_from_efi_boot_services;
@@ -18,13 +19,20 @@ use wasabi::uefi::EfiMemoryType;
 use wasabi::uefi::EfiSystemTable;
 use wasabi::uefi::VramTextWriter;
 use wasabi::x86::hlt;
-use wasabi::print;
+use wasabi::println;
+use wasabi::warn;
+use wasabi::info;
+use wasabi::error;
 
 #[no_mangle]
 fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
-    print!("Booting Wasabi OS...");
-    print!("image_handle: {:#18X}\n", image_handle);
-    print!("efi_system_table: {:#p}\n", efi_system_table);
+    println!("Booting Wasabi OS...");
+    println!("image_handle: {:#18X}\n", image_handle);
+    println!("efi_system_table: {:#p}\n", efi_system_table);
+    info!("info");
+    warn!("warn");
+    error!("error");
+    hexdump(efi_system_table);
     let mut vram = init_vram(efi_system_table).expect("init_vram failed");
     let vw = vram.width();
     let vh = vram.height();
@@ -53,6 +61,7 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
+    error!("PANIC: {info:?}");
     exit_qemu(QemuExitCode::Fail);
 }
