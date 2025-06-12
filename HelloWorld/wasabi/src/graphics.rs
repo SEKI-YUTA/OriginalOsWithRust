@@ -127,28 +127,34 @@ fn draw_line<T: Bitmap>(
 
 fn lookup_font(c: char) -> Option<[[char; 8]; 16]> {
     const FONT_SOURCE: &str = include_str!("./font.txt");
+    static mut FONT_CACHE: Option<[[[char; 8]; 16]; 256]> = None;
     if let Ok(c) = u8::try_from(c) {
-        let mut fi = FONT_SOURCE.split('\n');
-        while let Some(line) = fi.next() {
-            if let Some(line) = line.strip_prefix("0x") {
-                if let Ok(idx) = u8::from_str_radix(line, 16) {
-                    if idx != c {
-                        continue;
-                    }
-                    let mut font = [['*'; 8]; 16];
-                    for (y, line) in fi.clone().take(16).enumerate() {
-                        for (x, c) in line.chars().enumerate() {
-                            if let Some(e) = font[y].get_mut(x) {
-                                *e = c;
+        let font = unsafe {
+            FONT_CACHE.get_or_insert_with(|| {
+                let mut font = [[['*'; 8]; 16]; 256];
+                let mut fi = FONT_SOURCE.split('\n');
+                while let Some(line) = fi.next() {
+                    if let Some(line) = line.strip_prefix("0x") {
+                        if let Ok(idx) = i8::from_str_radix(line, 16) {
+                            let mut glyph = [['*'; 8]; 16];
+                            for (y, line) in fi.clone().take(16).enumerate() {
+                                for (x, c) in line.chars().enumerate() {
+                                    if let Some(e) = glyph[y].get_mut(x) {
+                                        *e = c;
+                                    }
+                                }
                             }
+                            font[idx as usize] = glyph;
                         }
                     }
-                    return Some(font);
                 }
-            }
-        }
+                font
+            })
+        };
+        Some(font[c as usize])
+    } else {
+        return None;
     }
-    None
 }
 
 pub fn draw_font_fg<T: Bitmap>(
