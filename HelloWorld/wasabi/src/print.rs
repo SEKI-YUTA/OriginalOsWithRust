@@ -42,6 +42,7 @@ fn hexdump_bytes(bytes: &[u8]) {
             print!("{offset:08X}: ");
         }
         print!("{:02X}", v);
+        ascii[i] = *v;
         i += 1;
         if i == 16 {
             print!("|");
