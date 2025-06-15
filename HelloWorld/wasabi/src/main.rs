@@ -23,6 +23,8 @@ use wasabi::println;
 use wasabi::warn;
 use wasabi::info;
 use wasabi::error;
+use wasabi::x86::init_exceptions;
+use wasabi::x86::trigger_debug_interrupt;
 
 #[no_mangle]
 fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
@@ -65,6 +67,9 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     println!("{t:?}");
     let t = t.and_then(|t| t.next_level(0));
     println!("{t:?}");
+    let (_gdt, _idt) = init_exceptions();
+    info!("Exceptions initialized");
+    trigger_debug_interrupt();
     loop {
         hlt()
     }
