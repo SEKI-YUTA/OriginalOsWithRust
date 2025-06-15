@@ -12,7 +12,6 @@ use wasabi::init;
 use wasabi::print::hexdump;
 use wasabi::qemu::exit_qemu;
 use wasabi::qemu::QemuExitCode;
-use wasabi::uefi::exit_from_efi_boot_services;
 use wasabi::uefi::init_vram;
 use wasabi::uefi::EfiHandle;
 use wasabi::uefi::EfiMemoryType;
@@ -28,9 +27,9 @@ use wasabi::x86::trigger_debug_interrupt;
 
 #[no_mangle]
 fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
-    println!("Booting Wasabi OS...");
-    println!("image_handle: {:#18X}\n", image_handle);
-    println!("efi_system_table: {:#p}\n", efi_system_table);
+    println!("Booting WasabiOS...");
+    println!("image_handle: {:#018X}", image_handle);
+    println!("efi_system_table: {:#p}", efi_system_table);
     info!("info");
     warn!("warn");
     error!("error");
