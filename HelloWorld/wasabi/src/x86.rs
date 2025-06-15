@@ -440,7 +440,10 @@ extern "sysv64" fn inthandler(info: &InterruptInfo, index: usize) {
     error!("Interrupt Info: {:?}", info);
     error!("Exception {index:#04X}: ");
     match index {
-        3 => error!("Breakpoint"),
+        3 => {
+            error!("Breakpoint");
+            return;
+        },
         6 => error!("Invalid Opcode"),
         8 => error!("Double Fault"),
         13 => {
