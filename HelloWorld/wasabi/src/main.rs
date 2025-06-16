@@ -5,6 +5,10 @@
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::writeln;
+use wasabi::executor::Executor;
+use wasabi::executor::Task;
+use wasabi::executor::block_on;
+use wasabi::executor::yield_execution;
 use wasabi::graphics::draw_test_pattern;
 use wasabi::graphics::fill_rect;
 use wasabi::graphics::Bitmap;
@@ -81,12 +85,31 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     info!("Execution continued");
     init_paging(&memory_map);
     info!("Now we are using our own paging tables!");
-
     info!("Reading from memory addres 0...");
 
-    loop {
-        hlt()
-    }
+    flush_tlb();
+     //let task = Task::new(async {
+         //info!("Hello from the async world!");
+         //Ok(())
+     //});
+    let task1 = Task::new(async {
+        for i in 100..=103 {
+            info!("Task 1: {i}");
+            yield_execution().await;
+        }
+        Ok(())
+    });
+    let task2 = Task::new(async {
+        for i in 200..=203 {
+            info!("Task 2: {i}");
+            yield_execution().await;
+        }
+        Ok(())
+    });
+    let mut executor = Executor::new();
+    executor.enqueue(task1);
+    executor.enqueue(task2);
+    Executor::run(executor)
 }
 
 #[panic_handler]

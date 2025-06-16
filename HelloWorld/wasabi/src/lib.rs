@@ -5,6 +5,7 @@
 #![reexport_test_harness_main = "run_unit_tests"]
 #![no_main]
 pub mod allocator;
+pub mod executor;
 pub mod graphics;
 pub mod qemu;
 pub mod result;
