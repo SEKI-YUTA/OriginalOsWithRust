@@ -14,6 +14,7 @@ pub mod uefi;
 pub mod x86;
 pub mod init;
 pub mod print;
+pub mod acpi;
 
 #[cfg(test)]
 pub mod test_runner;
