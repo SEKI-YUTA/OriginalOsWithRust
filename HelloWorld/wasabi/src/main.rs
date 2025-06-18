@@ -18,6 +18,10 @@ use wasabi::hpet::Hpet;
 use wasabi::hpet::global_timestamp;
 use wasabi::hpet::set_global_hpet;
 use wasabi::init;
+use wasabi::init::init_allocator;
+use wasabi::init::init_basic_runtime;
+use wasabi::init::init_display;
+use wasabi::init::init_hpet;
 use wasabi::init::init_paging;
 use wasabi::print::hexdump;
 use wasabi::qemu::exit_qemu;
@@ -55,56 +59,18 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     error!("error");
     hexdump(efi_system_table);
     let mut vram = init_vram(efi_system_table).expect("init_vram failed");
-    let vw = vram.width();
-    let vh = vram.height();
-    fill_rect(&mut vram, 0x000000, 0, 0, vw, vh).expect("fill_rect failed");
     draw_test_pattern(&mut vram);
+    init_display(&mut vram);
     let mut w = VramTextWriter::new(&mut vram);
     let acpi = efi_system_table.acpi_table().expect("ACPI table not found");
     let memory_map = init::init_basic_runtime(image_handle, efi_system_table);
-    let mut total_memory_pages = 0;
-    for e in memory_map.iter() {
-        if e.memory_type() != EfiMemoryType::CONVENTIONAL_MEMORY {
-            continue;
-        }
-        total_memory_pages += e.number_of_pages();
-        writeln!(w, "{e:?}").unwrap();
-    }
-    let total_memory_size_mib = total_memory_pages * 4096 / 1024 / 1024;
-    writeln!(
-        w,
-        "Total: {total_memory_pages} pages = {total_memory_size_mib} MiB"
-    )
-    .unwrap();
     writeln!(w, "Hello, Non-UEFI world!").unwrap();
-    let cr3 = wasabi::x86::read_cr3();
-    println!("cr3 = {cr3:#p}");
-    let t = Some(unsafe { &*cr3 });
-    println!("{t:?}");
-    let t = t.and_then(|t| t.next_level(0));
-    println!("{t:?}");
-    let t = t.and_then(|t| t.next_level(0));
-    println!("{t:?}");
-    let t = t.and_then(|t| t.next_level(0));
-    println!("{t:?}");
+    init_allocator(&memory_map);
     let (_gdt, _idt) = init_exceptions();
-    info!("Exceptions initialized");
-    trigger_debug_interrupt();
-    info!("Execution continued");
     init_paging(&memory_map);
-    info!("Now we are using our own paging tables!");
-    info!("Reading from memory addres 0...");
 
     flush_tlb();
-     //let task = Task::new(async {
-         //info!("Hello from the async world!");
-         //Ok(())
-     //});
-    let hpet = acpi.hpet().expect("Failed to get HPET from ACPI");
-    let hpet = hpet.base_address().expect("Failed to get HPET base address");
-    info!("HPET is at {hpet:#p}");
-    let hpet = Hpet::new(hpet);
-    set_global_hpet(hpet);
+    init_hpet(acpi);
     let t0 = global_timestamp();
     let task1 = Task::new(async move {
         for i in 100..=103 {
