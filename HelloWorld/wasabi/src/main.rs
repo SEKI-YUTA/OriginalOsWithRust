@@ -4,9 +4,11 @@
 
 use core::fmt::Write;
 use core::panic::PanicInfo;
+use core::time::Duration;
 use core::writeln;
 use wasabi::executor::Executor;
 use wasabi::executor::Task;
+use wasabi::executor::TimeoutFuture;
 use wasabi::executor::block_on;
 use wasabi::executor::yield_execution;
 use wasabi::graphics::draw_test_pattern;
@@ -107,14 +109,16 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     let task1 = Task::new(async move {
         for i in 100..=103 {
             info!("{i} hpet.main_counter = {:?}", global_timestamp() - t0);
-            yield_execution().await;
+            // yield_execution().await;
+            TimeoutFuture::new(Duration::from_millis(1000)).await;
         }
         Ok(())
     });
     let task2 = Task::new(async move {
         for i in 200..=203 {
             info!("{i} hpet.main_counter = {:?}", global_timestamp() - t0);
-            yield_execution().await;
+            // yield_execution().await;
+            TimeoutFuture::new(Duration::from_millis(2000)).await;
         }
         Ok(())
     });
