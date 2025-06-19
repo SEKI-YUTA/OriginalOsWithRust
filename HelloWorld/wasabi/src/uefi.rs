@@ -1,8 +1,8 @@
 use crate::acpi::AcpiRsdpStruct;
-use crate::graphics::draw_font_fg;
+
 use crate::graphics::Bitmap;
 use crate::result::Result;
-use core::fmt;
+
 use core::mem::offset_of;
 use core::mem::size_of;
 use core::ptr::null_mut;

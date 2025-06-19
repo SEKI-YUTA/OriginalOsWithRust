@@ -2,25 +2,25 @@
 #![no_main]
 #![feature(offset_of)]
 
-use core::fmt::Write;
+
 use core::panic::PanicInfo;
 use core::time::Duration;
-use core::writeln;
+
 use wasabi::executor::Executor;
 use wasabi::executor::Task;
 use wasabi::executor::TimeoutFuture;
-use wasabi::executor::block_on;
-use wasabi::executor::yield_execution;
-use wasabi::graphics::BitmapTextWriter;
+
+
+
 use wasabi::graphics::draw_test_pattern;
-use wasabi::graphics::fill_rect;
-use wasabi::graphics::Bitmap;
+
+
 use wasabi::hpet::Hpet;
 use wasabi::hpet::global_timestamp;
-use wasabi::hpet::set_global_hpet;
+
 use wasabi::init;
 use wasabi::init::init_allocator;
-use wasabi::init::init_basic_runtime;
+
 use wasabi::init::init_display;
 use wasabi::init::init_hpet;
 use wasabi::init::init_paging;
@@ -31,21 +31,19 @@ use wasabi::qemu::exit_qemu;
 use wasabi::qemu::QemuExitCode;
 use wasabi::uefi::init_vram;
 use wasabi::uefi::EfiHandle;
-use wasabi::uefi::EfiMemoryType;
+
 use wasabi::uefi::EfiSystemTable;
 use wasabi::uefi::locate_loaded_image_protocol;
-use wasabi::x86::PageAttr;
+
 use wasabi::x86::flush_tlb;
-use wasabi::x86::hlt;
+
 use wasabi::println;
 use wasabi::warn;
 use wasabi::info;
 use wasabi::error;
 use wasabi::x86::init_exceptions;
-use wasabi::x86::read_cr3;
-use wasabi::x86::trigger_debug_interrupt;
 
-static mut GLOBAL_HPET: Option<Hpet> = None;
+
 
 #[no_mangle]
 fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
