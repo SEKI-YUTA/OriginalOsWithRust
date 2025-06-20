@@ -15,7 +15,6 @@ use wasabi::executor::TimeoutFuture;
 use wasabi::graphics::draw_test_pattern;
 
 
-use wasabi::hpet::Hpet;
 use wasabi::hpet::global_timestamp;
 
 use wasabi::init;
@@ -29,6 +28,7 @@ use wasabi::print::hexdump;
 use wasabi::print::set_global_vram;
 use wasabi::qemu::exit_qemu;
 use wasabi::qemu::QemuExitCode;
+use wasabi::serial::SerialPort;
 use wasabi::uefi::init_vram;
 use wasabi::uefi::EfiHandle;
 
@@ -88,9 +88,24 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
         }
         Ok(())
     });
+    let serial_task = Task::new(async {
+        let sp = SerialPort::default();
+        if let Err(e) = sp.loopback_test() {
+            error!("serial: loopback test failed");
+        }
+        info!("Started to monitor serial port");
+        loop {
+            if let Some(v) = sp.try_read() {
+                let c = char::from_u32(v as u32);
+                info!("serial input: {v:#04X} = {c:?}");
+            }
+            TimeoutFuture::new(Duration::from_millis(20)).await;
+        }
+    });
     let mut executor = Executor::new();
     executor.enqueue(task1);
     executor.enqueue(task2);
+    executor.enqueue(serial_task);
     Executor::run(executor)
 }
 
