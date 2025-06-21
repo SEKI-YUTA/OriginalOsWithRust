@@ -2,7 +2,6 @@
 .vscode
 /qemu-build
 .DS_Store
-log/com1.txt
 mnt/NvVars
 mnt/EFI/BOOT/BOOTX64.EFI
 log/
