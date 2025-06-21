@@ -20,6 +20,7 @@ pub mod print;
 pub mod acpi;
 pub mod hpet;
 pub mod mutex;
+pub mod pci;
 
 #[cfg(test)]
 pub mod test_runner;

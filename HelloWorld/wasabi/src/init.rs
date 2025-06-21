@@ -8,6 +8,7 @@ use crate::graphics::fill_rect;
 use crate::hpet::Hpet;
 use crate::hpet::set_global_hpet;
 use crate::info;
+use crate::pci::Pci;
 use crate::uefi::EfiMemoryType;
 use crate::uefi::VramBufferInfo;
 use crate::uefi::exit_from_efi_boot_services;
@@ -93,5 +94,7 @@ pub fn init_pci(acpi: &AcpiRsdpStruct) {
                 info!("{}", e)
             }
         }
+        let pci = Pci::new(mcfg);
+        pci.probe_deviecs();
     }
 }
