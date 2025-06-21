@@ -19,6 +19,7 @@ mkdir -p log
     -monitor telnet:0.0.0.0:2345,server,nowait,logfile=log/qemu_monitor.txt \
     -chardev stdio,id=char_com1,mux=on,logfile=log/com1.txt \
     -serial chardev:char_com1 \
+    -device qemu-xhci \
     -device isa-debug-exit,iobase=0xf4,iosize=0x01
 
 RETCODE=$?
