@@ -23,6 +23,9 @@ pub mod hpet;
 pub mod mutex;
 pub mod pci;
 pub mod xhci;
+pub mod bits;
+pub mod mmio;
+pub mod volatile;
 
 #[cfg(test)]
 pub mod test_runner;
