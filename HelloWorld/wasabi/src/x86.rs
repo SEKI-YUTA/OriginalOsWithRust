@@ -1,14 +1,15 @@
 extern crate alloc;
 
+use crate::mmio::IoBox;
 use crate::result::Result;
 use crate::{error, info};
 use alloc::boxed::Box;
 use core::arch::{asm, global_asm};
 use core::fmt;
 use core::marker::PhantomData;
+use core::mem::MaybeUninit;
 use core::mem::{offset_of, size_of, size_of_val, ManuallyDrop};
 use core::pin::Pin;
-use core::mem::MaybeUninit;
 
 pub fn hlt() {
     unsafe { asm!("hlt") }
@@ -107,7 +108,7 @@ impl<const LEVEL: usize, NEXT> Entry<LEVEL, NEXT> {
     }
     fn table_mut(&mut self) -> Result<&mut NEXT> {
         if self.is_present() {
-            Ok(unsafe { &mut *((self.value & !ATTR_MASK) as *mut NEXT)})
+            Ok(unsafe { &mut *((self.value & !ATTR_MASK) as *mut NEXT) })
         } else {
             Err("Page Not Found")
         }
@@ -124,7 +125,7 @@ impl<const LEVEL: usize, NEXT> Entry<LEVEL, NEXT> {
         if self.is_present() {
             Err("Page is already populated")
         } else {
-            let next: Box<NEXT> = Box::new(unsafe { MaybeUninit::zeroed().assume_init()});
+            let next: Box<NEXT> = Box::new(unsafe { MaybeUninit::zeroed().assume_init() });
             self.value = Box::into_raw(next) as u64 | PageAttr::ReadWriteKernel as u64;
             Ok(self)
         }
@@ -178,9 +179,7 @@ impl<const LEVEL: usize, NEXT: core::fmt::Debug> Table<LEVEL, NEXT> {
     }
 }
 
-impl<const LEVEL: usize, NEXT: fmt::Debug> fmt::Debug
-    for Table<LEVEL, NEXT>
-{
+impl<const LEVEL: usize, NEXT: fmt::Debug> fmt::Debug for Table<LEVEL, NEXT> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.format(f)
     }
@@ -531,7 +530,7 @@ extern "sysv64" fn inthandler(info: &InterruptInfo, index: usize) {
         3 => {
             error!("Breakpoint");
             return;
-        },
+        }
         6 => error!("Invalid Opcode"),
         8 => error!("Double Fault"),
         13 => {
@@ -925,8 +924,23 @@ pub unsafe fn take_current_page_table() -> ManuallyDrop<Box<PML4>> {
 pub unsafe fn put_current_page_table(mut table: ManuallyDrop<Box<PML4>>) {
     write_cr3(Box::into_raw(ManuallyDrop::take(&mut table)))
 }
-pub unsafe fn with_current_page_table<F>(callback: F) where F: FnOnce(&mut PML4), {
+pub unsafe fn with_current_page_table<F>(callback: F)
+where
+    F: FnOnce(&mut PML4),
+{
     let mut table = take_current_page_table();
     callback(&mut table);
     put_current_page_table(table)
+}
+
+pub fn disable_cache<T: Sized>(io_box: &IoBox<T>) {
+    let region = io_box.as_ref();
+    let vstart = region as *const T as u64;
+    let vend = vstart + size_of_val(region) as u64;
+    unsafe {
+        with_current_page_table(|pt| {
+            pt.create_mapping(vstart, vend, vstart, PageAttr::ReadWriteIo)
+                .expect("Failed to create mapping")
+        })
+    }
 }
