@@ -98,9 +98,13 @@ impl PciXhciDriver {
         info!("xhci: op_regs.USBSTS={}", xhc.regs.op_regs.as_ref().usbsts());
         info!("xhci: rt_regs.MFINDEX={}", xhc.regs.rt_regs.as_ref().mfindex());
         info!("PORTSC values for port{:?}", xhc.regs.portsc.port_range());
+        let mut connected_port = None;
         for port in xhc.regs.portsc.port_range() {
             if let Some(e) = xhc.regs.portsc.get(port) {
-                info!("{port:3}: {:#018X}", e.value())
+                info!("  {port:3}: {:#010X}", e.value());
+                if e.ccs() {
+                    connected_port = Some(port)
+                }
             }
         }
         let xhc = Rc::new(xhc);
@@ -112,6 +116,14 @@ impl PciXhciDriver {
                     yield_execution().await;
                 }
             })
+        }
+        if let Some(port) = connected_port {
+            info!("xhci: port {port} is connected");
+            if let Some(portsc) = xhc.regs.portsc.get(port) {
+                info!("xhci: resetting port {port}");
+                portsc.reset_port().await;
+                info!("xhci: port {port} has been reset");
+            }
         }
         Ok(())
     }
@@ -150,6 +162,12 @@ impl CapabilityRegisters {
     }
 }
 
+// [xhci_1_2] p.31
+// The Device Context Base Address Array contains 256 Entries
+// and supports up to 255 USB devices or hubs
+// [xhci_1_2] p.59
+// the first entry (SlotID = '0') in the Device Context Base
+// Address Array is utilized by the xHCI Scratchpad mechanism.
 #[repr(C, align(64))]
 struct RawDeviceContextBaseAddressArray {
     scratchpad_table_ptr: *const *const u8,
@@ -303,7 +321,7 @@ struct EndpointContext {
     data: [u32; 2],
     tr_dequeue_ptr: Volatile<u64>,
     average_trb_length: u16,
-    max_esit_playload_low: u16,
+    max_esit_payload_low: u16,
     _reserved: [u32; 3],
 }
 const _: () = assert!(size_of::<EndpointContext>() == 0x20);
@@ -333,8 +351,9 @@ impl DeviceContextBaseAddressArray {
     fn new(scratchpad_buffers: ScratchpadBuffers) -> Self {
         let mut inner = RawDeviceContextBaseAddressArray::new();
         inner.scratchpad_table_ptr = scratchpad_buffers.table.as_ref().as_ptr();
+        let inner = Box::pin(inner);
         Self {
-            inner: Box::pin(inner),
+            inner,
             _context: unsafe { MaybeUninit::zeroed().assume_init() },
             _scratchpad_buffers: scratchpad_buffers,
         }
@@ -371,7 +390,7 @@ impl Controller {
         xhc.init_command_ring();
         info!("Starting xHC...");
         unsafe { xhc.regs.op_regs.get_unchecked_mut() }.start_xhc();
-        info!("xHC started runnning");
+        info!("xHC started running!");
         Ok(xhc)
     }
     fn init_primary_event_ring(&mut self) -> Result<()> {
@@ -394,7 +413,7 @@ struct EventRing {
     erst: IoBox<EventRingSegmentTableEntry>,
     cycle_state_ours: bool,
     erdp: Option<*mut u64>,
-    wait_list: VecDeque<Weak<EventWaitInfo>>
+    wait_list: VecDeque<Weak<EventWaitInfo>>,
 }
 impl EventRing {
     fn new() -> Result<Self> {
@@ -412,13 +431,13 @@ impl EventRing {
         self.ring.as_ref() as *const TrbRing as u64
     }
     fn set_erdp(&mut self, erdp: *mut u64) {
-        self.erdp = Some(erdp)
+        self.erdp = Some(erdp);
     }
     fn erst_phys_addr(&self) -> u64 {
         self.erst.as_ref() as *const EventRingSegmentTableEntry as u64
     }
     fn pop(&mut self) -> Result<Option<GenericTrbEntry>> {
-        if self.has_next_event() {
+        if !self.has_next_event() {
             return Ok(None)
         }
         let e = self.ring.as_ref().current();
@@ -565,7 +584,8 @@ enum TrbType {
     EvaluateContextCommand = 13,
     NoOpCommand = 23,
     TransferEvent = 32,
-    CommandCompletionEvent = 34,
+    CommandCompletionEvent = 33,
+    PortStatusChangeEvent = 34,
     HostControllerEvent = 37,
 }
 
@@ -713,6 +733,44 @@ impl PortScEntry {
         let portsc = self.ptr.lock();
         unsafe {
             read_volatile(*portsc)
+        }
+    }
+    fn bit(&self, pos: usize) -> bool {
+        (self.value() & (1 << pos)) != 0 // Todoなんで==1にしない？
+    }
+    fn ccs(&self) -> bool {
+        self.bit(0)
+    }
+    fn assert_bit(&self, pos: usize) {
+        const PRESERVE_MASK: u32 = 0b01001111000000011111111111101001;
+        let portsc = self.ptr.lock();
+        let old = unsafe {
+            read_volatile(*portsc)
+        };
+        unsafe {
+            write_volatile(*portsc, (old & PRESERVE_MASK) | (1 << pos))
+        }
+    }
+    fn pp(&self) -> bool {
+        self.bit(9)
+    }
+    fn assert_pp(&self) {
+        self.assert_bit(9)
+    }
+    pub fn pr(&self) -> bool {
+        self.bit(4)
+    }
+    pub fn assert_pr(&self) {
+        self.assert_bit(4)
+    }
+    pub async fn reset_port(&self) {
+        self.assert_pp();
+        while !self.pp() {
+            yield_execution().await
+        }
+        self.assert_pr();
+        while self.pr() {
+            yield_execution().await
         }
     }
 }
