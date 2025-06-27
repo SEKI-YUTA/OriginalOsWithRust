@@ -9,10 +9,11 @@ use core::marker::PhantomPinned;
 use core::mem::size_of;
 use core::mem::MaybeUninit;
 use core::pin::Pin;
-
+use core::ptr::read_volatile;
 use crate::allocator::ALLOCATOR;
 use crate::bits::extract_bits;
 use crate::executor::spawn_global;
+use crate::executor::yield_execution;
 use crate::info;
 use crate::mmio::IoBox;
 use crate::mmio::Mmio;
@@ -24,7 +25,18 @@ use crate::pci::VendorDeviceId;
 use crate::result::Result;
 use crate::volatile::Volatile;
 use crate::x86::busy_loop_hint;
+use alloc::collections::VecDeque;
+use alloc::rc::Rc;
+use alloc::rc::Weak;
 use core::ptr::write_volatile;
+use core::ops::Range;
+
+struct XhcRegisters {
+    cap_regs: Mmio<CapabilityRegisters>,
+    op_regs: Mmio<OperationalRegisters>,
+    rt_regs: Mmio<RuntimeRegisters>,
+    portsc: PortSc,
+}
 
 pub struct PciXhciDriver {}
 impl PciXhciDriver {
@@ -47,11 +59,7 @@ impl PciXhciDriver {
     }
     fn setup_xhc_registers(
         bar0: &BarMem64,
-    ) -> Result<(
-        Mmio<CapabilityRegisters>,
-        Mmio<OperationalRegisters>,
-        Mmio<RuntimeRegisters>,
-    )> {
+    ) -> Result<XhcRegisters> {
         let cap_regs = unsafe { Mmio::from_raw(bar0.addr() as *mut CapabilityRegisters) };
         let op_regs = unsafe {
             Mmio::from_raw(
@@ -61,7 +69,15 @@ impl PciXhciDriver {
         let rt_regs = unsafe {
             Mmio::from_raw(bar0.addr().add(cap_regs.as_ref().rtsoff()) as *mut RuntimeRegisters)
         };
-        Ok((cap_regs, op_regs, rt_regs))
+        let portsc = PortSc::new(bar0, cap_regs.as_ref());
+        Ok(
+            XhcRegisters {
+                cap_regs,
+                op_regs,
+                rt_regs,
+                portsc
+            }
+        )
     }
     pub fn attach(pci: &Pci, bdf: BusDeviceFunction) -> Result<()> {
         info!("Xhci found at: {bdf:?}");
@@ -69,18 +85,34 @@ impl PciXhciDriver {
         pci.enable_bus_master(bdf)?;
         let bar0 = pci.try_bar0_mem64(bdf)?;
         bar0.disable_cache();
-        let (cap_regs, op_regs, rt_regs) = Self::setup_xhc_registers(&bar0)?;
-        let xhc = Controller::new(cap_regs, op_regs, rt_regs)?;
+        let regs = Self::setup_xhc_registers(&bar0)?;
+        let xhc = Controller::new(regs)?;
         spawn_global(Self::run(xhc));
         Ok(())
     }
     async fn run(xhc: Controller) -> Result<()> {
         info!(
             "xhci: cap_regs.MaxSlots={}",
-            xhc.cap_regs.as_ref().num_of_device_slots()
+            xhc.regs.cap_regs.as_ref().num_of_device_slots()
         );
-        info!("xhci: op_regs.USBSTS={}", xhc.op_regs.as_ref().usbsts());
-        info!("xhci: rt_regs.MFINDEX={}", xhc.rt_regs.as_ref().mfindex());
+        info!("xhci: op_regs.USBSTS={}", xhc.regs.op_regs.as_ref().usbsts());
+        info!("xhci: rt_regs.MFINDEX={}", xhc.regs.rt_regs.as_ref().mfindex());
+        info!("PORTSC values for port{:?}", xhc.regs.portsc.port_range());
+        for port in xhc.regs.portsc.port_range() {
+            if let Some(e) = xhc.regs.portsc.get(port) {
+                info!("{port:3}: {:#018X}", e.value())
+            }
+        }
+        let xhc = Rc::new(xhc);
+        {
+            let xhc = xhc.clone();
+            spawn_global(async move {
+                loop {
+                    xhc.primary_event_ring.lock().poll().await?;
+                    yield_execution().await;
+                }
+            })
+        }
         Ok(())
     }
 }
@@ -112,6 +144,9 @@ impl CapabilityRegisters {
     pub fn num_scratchpad_bufs(&self) -> usize {
         (extract_bits(self.hcsparams2.read(), 21, 5) << 5
             | extract_bits(self.hcsparams2.read(), 27, 5)) as usize
+    }
+    fn num_of_ports(&self) -> usize {
+        extract_bits(self.hcsparams1.read(), 24, 8) as usize
     }
 }
 
@@ -310,29 +345,23 @@ impl DeviceContextBaseAddressArray {
 }
 
 struct Controller {
-    cap_regs: Mmio<CapabilityRegisters>,
-    op_regs: Mmio<OperationalRegisters>,
-    rt_regs: Mmio<RuntimeRegisters>,
+    regs: XhcRegisters,
     device_context_base_array: Mutex<DeviceContextBaseAddressArray>,
     primary_event_ring: Mutex<EventRing>,
     command_ring: Mutex<CommandRing>,
 }
 impl Controller {
     fn new(
-        cap_regs: Mmio<CapabilityRegisters>,
-        mut op_regs: Mmio<OperationalRegisters>,
-        rt_regs: Mmio<RuntimeRegisters>,
+        mut regs: XhcRegisters
     ) -> Result<Self> {
-        unsafe { op_regs.get_unchecked_mut().reset_xhc() }
-        let scratchpad_buffers = ScratchpadBuffers::alloc(cap_regs.as_ref(), op_regs.as_ref())?;
+        unsafe { regs.op_regs.get_unchecked_mut().reset_xhc() }
+        let scratchpad_buffers = ScratchpadBuffers::alloc(regs.cap_regs.as_ref(), regs.op_regs.as_ref())?;
         let device_context_base_array = DeviceContextBaseAddressArray::new(scratchpad_buffers);
         let device_context_base_array = Mutex::new(device_context_base_array);
         let primary_event_ring = Mutex::new(EventRing::new()?);
         let command_ring = Mutex::new(CommandRing::default());
         let mut xhc = Self {
-            cap_regs,
-            op_regs,
-            rt_regs,
+            regs,
             device_context_base_array,
             primary_event_ring,
             command_ring,
@@ -341,21 +370,21 @@ impl Controller {
         xhc.init_slots_and_contexts()?;
         xhc.init_command_ring();
         info!("Starting xHC...");
-        unsafe { xhc.op_regs.get_unchecked_mut() }.start_xhc();
+        unsafe { xhc.regs.op_regs.get_unchecked_mut() }.start_xhc();
         info!("xHC started runnning");
         Ok(xhc)
     }
     fn init_primary_event_ring(&mut self) -> Result<()> {
         let eq = &mut self.primary_event_ring;
-        unsafe { self.rt_regs.get_unchecked_mut() }.init_irs(0, &mut eq.lock())
+        unsafe { self.regs.rt_regs.get_unchecked_mut() }.init_irs(0, &mut eq.lock())
     }
     fn init_command_ring(&mut self) {
-        unsafe { self.op_regs.get_unchecked_mut() }.set_cmd_ring_ctrl(&self.command_ring.lock());
+        unsafe { self.regs.op_regs.get_unchecked_mut() }.set_cmd_ring_ctrl(&self.command_ring.lock());
     }
     fn init_slots_and_contexts(&mut self) -> Result<()> {
-        let num_slots = self.cap_regs.as_ref().num_of_device_slots();
-        unsafe { self.op_regs.get_unchecked_mut() }.set_num_device_slots(num_slots)?;
-        unsafe { self.op_regs.get_unchecked_mut() }
+        let num_slots = self.regs.cap_regs.as_ref().num_of_device_slots();
+        unsafe { self.regs.op_regs.get_unchecked_mut() }.set_num_device_slots(num_slots)?;
+        unsafe { self.regs.op_regs.get_unchecked_mut() }
             .set_dcbaa_ptr(&mut self.device_context_base_array.lock())
     }
 }
@@ -363,8 +392,9 @@ impl Controller {
 struct EventRing {
     ring: IoBox<TrbRing>,
     erst: IoBox<EventRingSegmentTableEntry>,
-    _cycl_state_ours: bool,
+    cycle_state_ours: bool,
     erdp: Option<*mut u64>,
+    wait_list: VecDeque<Weak<EventWaitInfo>>
 }
 impl EventRing {
     fn new() -> Result<Self> {
@@ -373,8 +403,9 @@ impl EventRing {
         Ok(Self {
             ring,
             erst,
-            _cycl_state_ours: true,
+            cycle_state_ours: true,
             erdp: None,
+            wait_list: Default::default(),
         })
     }
     fn ring_phys_addr(&self) -> u64 {
@@ -385,6 +416,62 @@ impl EventRing {
     }
     fn erst_phys_addr(&self) -> u64 {
         self.erst.as_ref() as *const EventRingSegmentTableEntry as u64
+    }
+    fn pop(&mut self) -> Result<Option<GenericTrbEntry>> {
+        if self.has_next_event() {
+            return Ok(None)
+        }
+        let e = self.ring.as_ref().current();
+        let eptr = self.ring.as_ref().current_ptr() as u64;
+        unsafe {
+            self.ring.get_unchecked_mut()
+        }.advance_index_notoggle(self.cycle_state_ours)?;
+        unsafe {
+            let erdp = self.erdp.expect("erdp is not set");
+            write_volatile(erdp, eptr | (*erdp & 0b1111));
+        }
+        if self.ring.as_ref().current_index() == 0 { // TodoなんでわざわざGetter経由？
+            self.cycle_state_ours = !self.cycle_state_ours;
+        }
+        Ok(Some(e))
+    }
+    async fn poll(&mut self) -> Result<()> {
+        if let Some(e) = self.pop()? {
+            let mut consumed = false;
+            for w in &self.wait_list {
+                if let Some(w) = w.upgrade() {
+                    let w: &EventWaitInfo = w.as_ref();
+                    if w.matches(&e) {
+                        w.resolve(&e)?;
+                        consumed = true;
+                    }
+                }
+            }
+            if !consumed {
+                info!("unhandled event: {e:?}");
+            }
+            // cleanup stale waiters
+            let stale_waiter_indices = self
+            .wait_list
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|e| -> Option<usize> {
+                if e.1.strong_count() == 0 {
+                    Some(e.0)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<usize>>();
+            for k in stale_waiter_indices {
+                self.wait_list.remove(k);
+            }
+        }
+        Ok(())
+    }
+    fn has_next_event(&self) -> bool {
+        self.ring.as_ref().current().cycle_state() == self.cycle_state_ours
     }
 }
 #[repr(C, align(4096))]
@@ -438,6 +525,27 @@ impl TrbRing {
     fn phys_addr(&self) -> u64 {
         &self.trb[0] as *const GenericTrbEntry as u64
     }
+    fn current_index(&self) -> usize {
+        self.current_index
+    }
+    fn advance_index_notoggle(&mut self, cycle_ours: bool) -> Result<()> {
+        if self.current().cycle_state() != cycle_ours {
+            return Err("cycle state mismatch");
+        }
+        self.current_index = (self.current_index + 1) % self.trb.len();
+        Ok(())
+    }
+    fn current(&self) -> GenericTrbEntry {
+        self.trb(self.current_index)
+    }
+    fn trb(&self, index: usize) -> GenericTrbEntry {
+        unsafe {
+            read_volatile(&self.trb[index])
+        }
+    }
+    fn current_ptr(&self) -> usize {
+        &self.trb[self.current_index] as *const GenericTrbEntry as usize
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -461,7 +569,7 @@ enum TrbType {
     HostControllerEvent = 37,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 #[repr(C, align(16))]
 struct GenericTrbEntry {
     data: Volatile<u64>,
@@ -482,6 +590,18 @@ impl GenericTrbEntry {
     }
     fn set_toggle_cycle(&mut self, value: bool) {
         self.control.write_bits(1, 1, value.into()).unwrap()
+    }
+    fn data(&self) -> u64 {
+        self.data.read()
+    }
+    fn slot_id(&self) -> u8 {
+        self.control.read_bits(24, 8).try_into().unwrap()
+    }
+    fn trb_type(&self) -> u32 {
+        self.control.read_bits(10, 6)
+    } 
+    fn cycle_state(&self) -> bool {
+        self.control.read_bits(0, 1) != 0
     }
 }
 
@@ -505,5 +625,94 @@ impl Default for CommandRing {
             .write(TrbRing::NUM_TRB - 1, link_trb)
             .expect("faield to write a link trb");
         this
+    }
+}
+
+#[derive(Debug)]
+struct EventWaitCond {
+    trb_type: Option<TrbType>,
+    trb_addr: Option<u64>,
+    slot: Option<u8>,
+}
+
+#[derive(Debug)]
+struct EventWaitInfo {
+    cond: EventWaitCond,
+    trbs: Mutex<VecDeque<GenericTrbEntry>>,
+}
+impl EventWaitInfo {
+    fn matches(&self, trb: &GenericTrbEntry) -> bool {
+        if let Some(trb_type) = self.cond.trb_type {
+            if trb.trb_type() != trb_type as u32 {
+                return false;
+            }
+        }
+        if let Some(slot) = self.cond.slot {
+            if trb.slot_id() != slot {
+                return false;
+            }
+        }
+        if let Some(trb_addr) = self.cond.trb_addr {
+            if trb.data() != trb_addr {
+                return false;
+            }
+        }
+        true
+    }
+    fn resolve(&self, trb: &GenericTrbEntry) -> Result<()> {
+        self.trbs.under_locked(&|trbs| -> Result<()> {
+            trbs.push_back(trb.clone());
+            Ok(())
+        })
+    }
+}
+
+// Interface ti access PORTSC registers
+// [xhci]: 5.4.8 PORTSC
+// OperationalBase + (0x400 + 0x10 * (n - 1))
+// where n = Port Number (1,2, ..., MaxPorts)
+struct PortSc {
+    entries: Vec<Rc<PortScEntry>>
+}
+impl PortSc {
+    fn new(bar: &BarMem64, cap_regs: &CapabilityRegisters) -> Self {
+        let base = unsafe {
+            bar.addr().add(cap_regs.caplength()).add(0x400)
+        } as *mut u32;
+        let num_ports = cap_regs.num_of_ports();
+        let mut entries = Vec::new();
+        for port in 1..=num_ports {
+            // SAFETY: This is safe since the result of ptr calculation
+            // always points to a valid PORTSC entry under the condition
+            let ptr = unsafe {
+                base.add((port - 1) * 4)
+            };
+            entries.push(Rc::new(PortScEntry::new(ptr)));
+        }
+        assert!(entries.len() == num_ports);
+        Self { entries }
+    }
+    fn port_range(&self) -> Range<usize> {
+        1..self.entries.len() + 1
+    }
+    fn get(&self, port: usize) -> Option<Rc<PortScEntry>> {
+        self.entries.get(port.wrapping_sub(1)).cloned()
+    }
+}
+#[repr(C)]
+struct PortScEntry {
+    ptr: Mutex<*mut u32>,
+}
+impl PortScEntry {
+    fn new(ptr: *mut u32) -> Self {
+        Self {
+            ptr: Mutex::new(ptr),
+        }
+    }
+    fn value(&self) -> u32 {
+        let portsc = self.ptr.lock();
+        unsafe {
+            read_volatile(*portsc)
+        }
     }
 }
