@@ -27,6 +27,7 @@ pub mod bits;
 pub mod mmio;
 pub mod volatile;
 pub mod pin;
+pub mod slice;
 
 #[cfg(test)]
 pub mod test_runner;
