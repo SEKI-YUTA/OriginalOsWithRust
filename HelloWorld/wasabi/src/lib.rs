@@ -28,6 +28,7 @@ pub mod mmio;
 pub mod volatile;
 pub mod pin;
 pub mod slice;
+pub mod keyboard;
 
 #[cfg(test)]
 pub mod test_runner;
