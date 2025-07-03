@@ -29,6 +29,8 @@ pub mod volatile;
 pub mod pin;
 pub mod slice;
 pub mod keyboard;
+pub mod usb;
+pub mod tablet;
 
 #[cfg(test)]
 pub mod test_runner;

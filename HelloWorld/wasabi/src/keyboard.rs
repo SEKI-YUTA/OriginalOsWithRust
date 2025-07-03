@@ -1,3 +1,15 @@
+extern crate alloc;
+
+use crate::info;
+use crate::result::Result;
+use crate::usb;
+use crate::usb::*;
+use crate::xhci::CommandRing;
+use crate::xhci::Controller;
+use alloc::collections::BTreeSet;
+use alloc::rc::Rc;
+use alloc::vec::Vec;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum KeyEvent {
     None,
@@ -9,7 +21,7 @@ impl KeyEvent {
     pub fn from_usb_key_id(usage_id: u8) -> Self {
         match usage_id {
             0 => KeyEvent::None,
-            4..=29 =>KeyEvent::Char((b'a' + usage_id - 4) as char),
+            4..=29 => KeyEvent::Char((b'a' + usage_id - 4) as char),
             30..=39 => KeyEvent::Char((b'0' + (usage_id + 1) % 10) as char),
             40 => KeyEvent::Enter,
             42 => KeyEvent::Char(0x08 as char),
@@ -19,7 +31,7 @@ impl KeyEvent {
             54 => KeyEvent::Char(','),
             55 => KeyEvent::Char('.'),
             56 => KeyEvent::Char('/'),
-            _ => KeyEvent::Unknown(usage_id)
+            _ => KeyEvent::Unknown(usage_id),
         }
     }
     pub fn to_char(&self) -> Option<char> {
@@ -28,5 +40,41 @@ impl KeyEvent {
             KeyEvent::Enter => Some('\n'),
             _ => None,
         }
+    }
+}
+
+pub async fn start_usb_keyboard(
+    xhc: &Rc<Controller>,
+    slot: u8,
+    ctrl_ep_ring: &mut CommandRing,
+    descriptors: &Vec<UsbDescriptor>,
+) -> Result<()> {
+    let (config_desc, interface_desc, _) = pick_interface_with_triple(descriptors, (3, 1, 1))
+        .ok_or("No USB KBD Boot interface found")?;
+    xhc.request_set_protocol(
+        slot,
+        ctrl_ep_ring,
+        config_desc.config_value(),
+        UsbHidProtocol::BootProtocol as u8,
+    )
+    .await?;
+    let mut prev_pressed = BTreeSet::new();
+    loop {
+        // let report = Self::request_hid_report(&xhc, slot, &mut ctrl_ep_ring)
+        // .await?;
+        let pressed = {
+            let report = usb::request_hid_report(&xhc, slot, ctrl_ep_ring).await?;
+            BTreeSet::from_iter(report.into_iter().skip(2).filter(|id| *id != 0))
+        };
+        let diff = pressed.symmetric_difference(&prev_pressed);
+        for id in diff {
+            let e = KeyEvent::from_usb_key_id(*id);
+            if pressed.contains(id) {
+                info!("usb_keyboard: key down: {id} = {e:?}");
+            } else {
+                info!("usb_keyboard: key up: {id} = {e:?}");
+            }
+        }
+        prev_pressed = pressed;
     }
 }
